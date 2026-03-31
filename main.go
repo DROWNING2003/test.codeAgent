@@ -154,120 +154,108 @@ func runCrawl(cfg crawlConfig) error {
 		return fmt.Errorf("起始 URL 无效: %w", err)
 	}
 
-	store, err := OpenSQLiteStore(cfg.DBPath)
-	if err != nil {
-		return fmt.Errorf("打开数据库失败: %w", err)
-	}
-	defer store.Close()
+	return withInitializedStore(context.Background(), cfg.DBPath, func(ctx context.Context, store *SQLiteStore) error {
+		crawler := NewCrawler(CrawlerConfig{
+			StartURL:  startURL,
+			MaxPages:  cfg.MaxPages,
+			Delay:     cfg.Delay,
+			Timeout:   cfg.Timeout,
+			UserAgent: cfg.UserAgent,
+			Store:     store,
+		})
 
-	ctx := context.Background()
-	if err := store.Init(ctx); err != nil {
-		return fmt.Errorf("初始化数据库失败: %w", err)
-	}
+		result, err := crawler.Crawl(ctx)
+		if err != nil {
+			return err
+		}
 
-	crawler := NewCrawler(CrawlerConfig{
-		StartURL:  startURL,
-		MaxPages:  cfg.MaxPages,
-		Delay:     cfg.Delay,
-		Timeout:   cfg.Timeout,
-		UserAgent: cfg.UserAgent,
-		Store:     store,
+		fmt.Printf(
+			"抓取完成: fetched=%d stored=%d skipped=%d db=%s host=%s\n",
+			result.Fetched,
+			result.Stored,
+			result.Skipped,
+			cfg.DBPath,
+			hostLabel(startURL),
+		)
+
+		return nil
 	})
-
-	result, err := crawler.Crawl(ctx)
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf(
-		"抓取完成: fetched=%d stored=%d skipped=%d db=%s host=%s\n",
-		result.Fetched,
-		result.Stored,
-		result.Skipped,
-		cfg.DBPath,
-		hostLabel(startURL),
-	)
-
-	return nil
 }
 
 func runList(cfg listConfig) error {
-	store, err := OpenSQLiteStore(cfg.DBPath)
-	if err != nil {
-		return fmt.Errorf("打开数据库失败: %w", err)
-	}
-	defer store.Close()
+	return withInitializedStore(context.Background(), cfg.DBPath, func(ctx context.Context, store *SQLiteStore) error {
+		pages, err := store.ListPages(ctx, ListPagesQuery{
+			Limit: cfg.Limit,
+			Host:  cfg.Host,
+		})
+		if err != nil {
+			return fmt.Errorf("查询列表失败: %w", err)
+		}
+		if len(pages) == 0 {
+			fmt.Println("没有记录")
+			return nil
+		}
 
-	ctx := context.Background()
-	if err := store.Init(ctx); err != nil {
-		return fmt.Errorf("初始化数据库失败: %w", err)
-	}
-
-	pages, err := store.ListPages(ctx, ListPagesQuery{
-		Limit: cfg.Limit,
-		Host:  cfg.Host,
+		writer := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(writer, "ID\tHOST\tSTATUS\tDEPTH\tCRAWLED_AT\tTITLE\tURL")
+		for _, page := range pages {
+			fmt.Fprintf(
+				writer,
+				"%d\t%s\t%d\t%d\t%s\t%s\t%s\n",
+				page.ID,
+				page.Host,
+				page.StatusCode,
+				page.Depth,
+				page.CrawledAt.Local().Format("2006-01-02 15:04:05"),
+				clipForTable(page.Title, 36),
+				page.URL,
+			)
+		}
+		return writer.Flush()
 	})
-	if err != nil {
-		return fmt.Errorf("查询列表失败: %w", err)
-	}
-	if len(pages) == 0 {
-		fmt.Println("没有记录")
-		return nil
-	}
-
-	writer := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(writer, "ID\tHOST\tSTATUS\tDEPTH\tCRAWLED_AT\tTITLE\tURL")
-	for _, page := range pages {
-		fmt.Fprintf(
-			writer,
-			"%d\t%s\t%d\t%d\t%s\t%s\t%s\n",
-			page.ID,
-			page.Host,
-			page.StatusCode,
-			page.Depth,
-			page.CrawledAt.Local().Format("2006-01-02 15:04:05"),
-			clipForTable(page.Title, 36),
-			page.URL,
-		)
-	}
-	return writer.Flush()
 }
 
 func runShow(cfg showConfig) error {
-	store, err := OpenSQLiteStore(cfg.DBPath)
+	return withInitializedStore(context.Background(), cfg.DBPath, func(ctx context.Context, store *SQLiteStore) error {
+		var page PageDetails
+		var err error
+		if cfg.ID > 0 {
+			page, err = store.GetPageByID(ctx, cfg.ID)
+		} else {
+			page, err = store.GetPageByURL(ctx, cfg.URL)
+		}
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("ID: %d\n", page.ID)
+		fmt.Printf("URL: %s\n", page.URL)
+		fmt.Printf("Host: %s\n", page.Host)
+		fmt.Printf("Status: %d\n", page.StatusCode)
+		fmt.Printf("Content-Type: %s\n", page.ContentType)
+		fmt.Printf("Depth: %d\n", page.Depth)
+		fmt.Printf("Crawled-At: %s\n", page.CrawledAt.Local().Format(time.RFC3339))
+		fmt.Printf("Title: %s\n", page.Title)
+		fmt.Printf("Summary: %s\n", page.Summary)
+		fmt.Println("Body:")
+		fmt.Println(page.BodyText)
+
+		return nil
+	})
+}
+
+func withInitializedStore(ctx context.Context, dbPath string, fn func(context.Context, *SQLiteStore) error) error {
+	store, err := OpenSQLiteStore(dbPath)
 	if err != nil {
 		return fmt.Errorf("打开数据库失败: %w", err)
 	}
 	defer store.Close()
 
-	ctx := context.Background()
 	if err := store.Init(ctx); err != nil {
 		return fmt.Errorf("初始化数据库失败: %w", err)
 	}
 
-	var page PageDetails
-	if cfg.ID > 0 {
-		page, err = store.GetPageByID(ctx, cfg.ID)
-	} else {
-		page, err = store.GetPageByURL(ctx, cfg.URL)
-	}
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("ID: %d\n", page.ID)
-	fmt.Printf("URL: %s\n", page.URL)
-	fmt.Printf("Host: %s\n", page.Host)
-	fmt.Printf("Status: %d\n", page.StatusCode)
-	fmt.Printf("Content-Type: %s\n", page.ContentType)
-	fmt.Printf("Depth: %d\n", page.Depth)
-	fmt.Printf("Crawled-At: %s\n", page.CrawledAt.Local().Format(time.RFC3339))
-	fmt.Printf("Title: %s\n", page.Title)
-	fmt.Printf("Summary: %s\n", page.Summary)
-	fmt.Println("Body:")
-	fmt.Println(page.BodyText)
-
-	return nil
+	return fn(ctx, store)
 }
 
 func usageText() string {
