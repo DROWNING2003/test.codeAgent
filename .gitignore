@@ -1,0 +1,14 @@
+.DS_Store
+
+# Go build outputs
+/crawler
+/test.codeagent
+*.test
+*.out
+coverage.out
+
+# Local crawler data
+/data/
+*.db
+*.db-shm
+*.db-wal
