@@ -10,6 +10,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode"
 )
 
 const defaultDBPath = "data/crawler.db"
@@ -203,12 +204,12 @@ func runList(cfg listConfig) error {
 				writer,
 				"%d\t%s\t%d\t%d\t%s\t%s\t%s\n",
 				page.ID,
-				page.Host,
+				sanitizeForTerminal(page.Host),
 				page.StatusCode,
 				page.Depth,
 				page.CrawledAt.Local().Format("2006-01-02 15:04:05"),
-				clipForTable(page.Title, 36),
-				page.URL,
+				clipForTable(sanitizeForTerminal(page.Title), 36),
+				sanitizeForTerminal(page.URL),
 			)
 		}
 		return writer.Flush()
@@ -229,16 +230,16 @@ func runShow(cfg showConfig) error {
 		}
 
 		fmt.Printf("ID: %d\n", page.ID)
-		fmt.Printf("URL: %s\n", page.URL)
-		fmt.Printf("Host: %s\n", page.Host)
+		fmt.Printf("URL: %s\n", sanitizeForTerminal(page.URL))
+		fmt.Printf("Host: %s\n", sanitizeForTerminal(page.Host))
 		fmt.Printf("Status: %d\n", page.StatusCode)
-		fmt.Printf("Content-Type: %s\n", page.ContentType)
+		fmt.Printf("Content-Type: %s\n", sanitizeForTerminal(page.ContentType))
 		fmt.Printf("Depth: %d\n", page.Depth)
 		fmt.Printf("Crawled-At: %s\n", page.CrawledAt.Local().Format(time.RFC3339))
-		fmt.Printf("Title: %s\n", page.Title)
-		fmt.Printf("Summary: %s\n", page.Summary)
+		fmt.Printf("Title: %s\n", sanitizeForTerminal(page.Title))
+		fmt.Printf("Summary: %s\n", sanitizeForTerminal(page.Summary))
 		fmt.Println("Body:")
-		fmt.Println(page.BodyText)
+		fmt.Println(sanitizeForTerminal(page.BodyText))
 
 		return nil
 	})
@@ -256,6 +257,19 @@ func withInitializedStore(ctx context.Context, dbPath string, fn func(context.Co
 	}
 
 	return fn(ctx, store)
+}
+
+func sanitizeForTerminal(value string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '\n', '\r', '\t':
+			return r
+		}
+		if unicode.IsPrint(r) {
+			return r
+		}
+		return -1
+	}, value)
 }
 
 func usageText() string {

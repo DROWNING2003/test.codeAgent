@@ -34,3 +34,11 @@ func TestParseCommandList(t *testing.T) {
 		t.Fatalf("unexpected host: %q", cfg.Host)
 	}
 }
+
+func TestSanitizeForTerminalStripsEscapeSequences(t *testing.T) {
+	got := sanitizeForTerminal("ok\x1b[31mred\x1b[0m\x07")
+	want := "ok[31mred[0m"
+	if got != want {
+		t.Fatalf("unexpected sanitized output: got %q want %q", got, want)
+	}
+}

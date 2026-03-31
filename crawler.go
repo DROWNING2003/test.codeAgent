@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"path"
 	"strings"
 	"time"
 )
@@ -43,9 +42,10 @@ type crawlTask struct {
 }
 
 func NewCrawler(cfg CrawlerConfig) *Crawler {
+	allowedHost := strings.ToLower(cfg.StartURL.Hostname())
 	return &Crawler{
 		startURL:    cloneURL(cfg.StartURL),
-		allowedHost: strings.ToLower(cfg.StartURL.Hostname()),
+		allowedHost: allowedHost,
 		maxPages:    cfg.MaxPages,
 		delay:       cfg.Delay,
 		userAgent:   cfg.UserAgent,
@@ -55,6 +55,15 @@ func NewCrawler(cfg CrawlerConfig) *Crawler {
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				if len(via) >= 10 {
 					return fmt.Errorf("redirect 太多，已停止")
+				}
+				if req.URL == nil {
+					return fmt.Errorf("redirect 目标为空")
+				}
+				if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+					return fmt.Errorf("redirect 目标 scheme 不允许: %s", req.URL.Scheme)
+				}
+				if !strings.EqualFold(req.URL.Hostname(), allowedHost) {
+					return fmt.Errorf("redirect 目标 host 不允许: %s", req.URL.Hostname())
 				}
 				return nil
 			},
@@ -100,16 +109,14 @@ func (c *Crawler) Crawl(ctx context.Context) (CrawlResult, error) {
 			})
 		}
 
-		if len(queue) == 0 || result.Fetched >= c.maxPages || c.delay <= 0 {
-			continue
-		}
-
-		timer := time.NewTimer(c.delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return result, ctx.Err()
-		case <-timer.C:
+		if len(queue) > 0 && result.Fetched < c.maxPages && c.delay > 0 {
+			timer := time.NewTimer(c.delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return result, ctx.Err()
+			case <-timer.C:
+			}
 		}
 	}
 
@@ -213,11 +220,9 @@ func canonicalURL(rawURL *url.URL) string {
 
 	if cloned.Path == "" {
 		cloned.Path = "/"
-	} else {
-		cloned.Path = path.Clean(cloned.Path)
-		if !strings.HasPrefix(cloned.Path, "/") {
-			cloned.Path = "/" + cloned.Path
-		}
+	}
+	if !strings.HasPrefix(cloned.Path, "/") {
+		cloned.Path = "/" + cloned.Path
 	}
 
 	query := cloned.Query()

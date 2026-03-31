@@ -22,8 +22,8 @@
 要求：
 
 - Go 1.25+
-- 本地可用的 C 编译环境
-  `github.com/mattn/go-sqlite3` 使用 CGO，构建时需要系统编译工具链
+- 无需本地 C 编译环境
+  当前使用 `modernc.org/sqlite`（纯 Go 实现），默认构建不依赖 CGO 工具链
 
 构建命令行工具：
 

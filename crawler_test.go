@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"net/http"
+	"net/url"
+	"testing"
+	"time"
+)
 
 func TestNormalizeSeedURL(t *testing.T) {
 	rawURL, err := normalizeSeedURL("example.com")
@@ -19,8 +24,44 @@ func TestCanonicalURL(t *testing.T) {
 		t.Fatalf("normalizeSeedURL returned error: %v", err)
 	}
 
-	if got, want := canonicalURL(rawURL), "https://example.com/b?q=2&z=1"; got != want {
+	if got, want := canonicalURL(rawURL), "https://example.com/a/../b?q=2&z=1"; got != want {
 		t.Fatalf("unexpected canonical URL: got %q want %q", got, want)
+	}
+}
+
+func TestCanonicalURLPreservesTrailingSlashSemantics(t *testing.T) {
+	docURL, err := normalizeSeedURL("https://example.com/docs")
+	if err != nil {
+		t.Fatalf("normalizeSeedURL returned error: %v", err)
+	}
+	docDirURL, err := normalizeSeedURL("https://example.com/docs/")
+	if err != nil {
+		t.Fatalf("normalizeSeedURL returned error: %v", err)
+	}
+
+	if canonicalURL(docURL) == canonicalURL(docDirURL) {
+		t.Fatal("expected /docs and /docs/ to remain distinct canonical URLs")
+	}
+}
+
+func TestCrawlerCheckRedirectRejectsCrossHost(t *testing.T) {
+	startURL, err := normalizeSeedURL("https://example.com")
+	if err != nil {
+		t.Fatalf("normalizeSeedURL returned error: %v", err)
+	}
+	crawler := NewCrawler(CrawlerConfig{
+		StartURL:  startURL,
+		MaxPages:  1,
+		Delay:     0,
+		Timeout:   time.Second,
+		UserAgent: "test-agent",
+	})
+
+	req := &http.Request{URL: &url.URL{Scheme: "https", Host: "127.0.0.1"}}
+	via := []*http.Request{{URL: startURL}}
+
+	if err := crawler.client.CheckRedirect(req, via); err == nil {
+		t.Fatal("expected CheckRedirect to reject cross-host redirect")
 	}
 }
 
